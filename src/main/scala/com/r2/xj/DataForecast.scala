@@ -86,36 +86,47 @@ object DataForecast {
     //slice base ts rdd to prepare forecasting
     val startDateTime = ZonedDateTime.of(LocalDateTime.parse("2016-01-02T00:00:00"), zone)
     val endDateTime = ZonedDateTime.of(LocalDateTime.parse("2016-01-07T00:00:00"), zone)
-    val baseTsrdd = filledTsrdd.slice(startDateTime, endDateTime) 
+    val sampleTsrdd = filledTsrdd.slice(startDateTime, endDateTime) 
     
-    val baseTs = baseTsrdd.findSeries(tag)
+    val sampleTs = sampleTsrdd.findSeries(tag)
     //println("base data size: " + baseTs.toArray.length);
     //println(baseTs)
-    val arimaModel = ARIMA.fitModel(1, 0, 1, baseTs)
-    //println("coefficients: " + arimaModel.coefficients.mkString(","))
-    val forecast = arimaModel.forecast(baseTs, 80)
-    //println("forecast data size: " + forecast.toArray.length);
-    //println("base + forecast of next 90 observations: " + forecast.toArray.mkString(","))
+    var forecastData = Array[Double]()
+    try {
+      val arimaModel = ARIMA.fitModel(1, 0, 1, sampleTs)
+      //println("coefficients: " + arimaModel.coefficients.mkString(","))
+      val forecast = arimaModel.forecast(sampleTs, 72)
+      //println("forecast data size: " + forecast.toArray.length);
+      //println("base + forecast of next 90 observations: " + forecast.toArray.mkString(","))
     
-    val actualDateTime = dtIndex.toZonedDateTimeArray
-    val actualData = filledTsrdd.findSeries(tag).toArray
-    val baseData = baseTs.toArray
-    val forecastData = forecast.toArray.slice(2, forecast.toArray.length)
-    var counter = 0;
-    var i = 0;
-    var output = ""
-    val formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.systemDefault());
-    for (i <- 0 to (actualDateTime.length-1)) {
-      var str = "\"" + actualDateTime(i).format(formatter) + "\"," + actualData(i)
-      if (actualDateTime(i).format(formatter) >= startDateTime.format(formatter)) {
-        str += "," + (if(counter<baseData.length) baseData(counter) else "null")
-        str += "," + (if(counter<forecastData.length) forecastData(counter) else "null")
-        counter = counter + 1;
-      } else {
-        str += ",null,null"
+      forecastData = forecast.toArray.slice(2, forecast.toArray.length)
+    } catch {
+      case e: org.apache.commons.math3.linear.SingularMatrixException => {
+        forecastData = sampleTs.toArray.slice(0, 10)
+      } 
+      case e: org.apache.commons.math3.exception.TooManyEvaluationsException => {
+        forecastData = sampleTs.toArray.slice(0, 10)
+      } 
+    } finally {
+      val actualDateTime = dtIndex.toZonedDateTimeArray
+      val actualData = filledTsrdd.findSeries(tag).toArray
+      val sampleData = sampleTs.toArray
+      var counter = 0;
+      var i = 0;
+      var output = ""
+      val formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.systemDefault());
+      for (i <- 0 to (actualDateTime.length-1)) {
+        var str = "\"" + actualDateTime(i).format(formatter) + "\"," + actualData(i)
+        if (actualDateTime(i).format(formatter) >= startDateTime.format(formatter)) {
+          str += "," + (if(counter<sampleData.length) sampleData(counter) else "null")
+          str += "," + (if(counter<forecastData.length) forecastData(counter) else "null")
+          counter = counter + 1;
+        } else {
+          str += ",null,null"
+        }
+        output += "["+str+"],"
       }
-      output += "["+str+"],"
+      println("["+output.dropRight(1)+"]");
     }
-    println("["+output.dropRight(1)+"]");
   }
 }
