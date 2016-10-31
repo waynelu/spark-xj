@@ -123,5 +123,10 @@
       <artifactId>sparkts</artifactId>
       <version>${sparkts.version}</version>
     </dependency>
+    <dependency>
+      <groupId>org.elasticsearch</groupId>
+      <artifactId>elasticsearch-spark_2.10</artifactId>
+      <version>2.4.0</version>
+    </dependency>
   </dependencies>
 </project>

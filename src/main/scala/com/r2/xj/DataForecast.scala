@@ -14,6 +14,8 @@ import org.apache.spark.sql.types._
 import com.cloudera.sparkts.models.ARIMA
 import org.apache.spark.mllib.linalg.Vectors
 
+import org.elasticsearch.spark.sql._
+
 /**
  * An example exhibiting the use of TimeSeriesRDD for loading, cleaning, and filtering stock ticker
  * data.
@@ -23,7 +25,7 @@ object DataForecast {
    * Creates a Spark DataFrame of (timestamp, symbol, price) from a tab-separated file of stock
    * ticker data.
    */
-  def loadObservations(sqlContext: SQLContext, path: String): DataFrame = {
+  def loadObservations(sqlContext: SQLContext, path: String, tag: String): DataFrame = {
     val rowRdd = sqlContext.sparkContext.textFile(path).map { line =>
       val tokens = line.split(',')
       val formatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").withZone(ZoneId.systemDefault());
@@ -31,7 +33,7 @@ object DataForecast {
       val tag = tokens(1)
       val value = tokens(2).toDouble
       Row(Timestamp.from(dt.toInstant), tag, value)
-    }
+    }.filter { line => line.toString.contains(tag) }
     val fields = Seq(
       StructField("timestamp", TimestampType, true),
       StructField("tag", StringType, true),
@@ -41,15 +43,38 @@ object DataForecast {
     sqlContext.createDataFrame(rowRdd, schema)
   }
 
+  def loadObservationsFromES(sqlContext: SQLContext, path: String, tag: String): DataFrame = {
+    val options = Map("es.read.field.include" -> "tagtime, tagid, value", "es.query" -> "?q=tagid:".concat(tag));
+    val df = sqlContext.read.format("org.elasticsearch.spark.sql").options(options).load(path)
+    return df;
+    
+    /*
+    val fields = Seq(
+      StructField("timestamp", TimestampType, true),
+      StructField("tag", StringType, true),
+      StructField("value", DoubleType, true)
+    )
+    val schema = StructType(fields)
+    sqlContext.createDataFrame(rowRdd, schema)
+    */
+  }
+
   def main(args: Array[String]): Unit = {
     val tag = args(0)
         
     val conf = new SparkConf().setAppName("XJ Data Forecast")
     conf.set("spark.io.compression.codec", "org.apache.spark.io.LZ4CompressionCodec")
+    conf.set("spark.es.nodes", "localhost")
+    conf.set("spark.es.port", "9200")
+    conf.set("spark.es.resource", "xj-data/data")
     val sc = new SparkContext(conf)
     val sqlContext = new SQLContext(sc)
 
-    val dataObs = loadObservations(sqlContext, "./data_201601/adata_301.csv")
+    val dataObs = loadObservations(sqlContext, "./data_201601/adata_301.csv", tag)
+    //val dataObs = loadObservationsFromES(sqlContext, "xj-data/data", tag)
+    //println(dataObs.count)
+    //return
+    
 
     // Create an daily DateTimeIndex over August and September 2015
     val zone = ZoneId.systemDefault()
@@ -62,6 +87,7 @@ object DataForecast {
     // Align the data on the DateTimeIndex to create a TimeSeriesRDD
     val dataTsrdd = TimeSeriesRDD.timeSeriesRDDFromObservations(dtIndex, dataObs,
       "timestamp", "tag", "value")
+      //"tagtime", "tagid", "value")
 
     // Cache it in memory
     dataTsrdd.cache()
