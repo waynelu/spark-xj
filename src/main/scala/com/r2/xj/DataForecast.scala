@@ -1,6 +1,6 @@
 package com.r2.xj
 
-import java.sql.Timestamp
+import java.sql.{Timestamp, DriverManager}
 import java.time.{LocalDateTime, ZoneId, ZonedDateTime}
 import java.time.format.DateTimeFormatter
 
@@ -59,6 +59,41 @@ object DataForecast {
     */
   }
 
+  def loadObservationsFromPI(sqlContext: SQLContext, path: String, tag: String): DataFrame = {
+    val url = "jdbc:pioledb://r2win.ddns.net/Data Source=r2win.ddns.net; Integrated Security=SSPI"
+    val driverClassName = "com.osisoft.jdbc.Driver";
+    Class.forName(driverClassName).newInstance();
+    val connection = DriverManager.getConnection(url)
+    val pStatement = connection.prepareStatement("SELECT time, tag, value FROM picomp2 WHERE time >='2016-10-01' and time<='2016-10-12' and tag like ?");
+    pStatement.setString(1, tag);
+    val resultSet = pStatement.executeQuery();
+
+
+    val stream = new Iterator[String] {
+      def hasNext = resultSet.next()
+      def next() = resultSet.getString(1) + "," + resultSet.getString(2) + "," + resultSet.getString(3)
+    }.toStream
+
+    val rdd = sqlContext.sparkContext.parallelize(stream).filter { line => !line.toString.contains("null") }
+    val rowRdd = rdd.map{ line =>
+      val tokens = line.split(',')
+      val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.0").withZone(ZoneId.systemDefault());
+      val dt = ZonedDateTime.parse(tokens(0), formatter)
+      val time = tokens(0)
+      val tag = tokens(1)
+      val value = tokens(2).toDouble
+      Row(Timestamp.from(dt.toInstant), tag, value)
+    }
+
+    val fields = Seq(
+      StructField("timestamp", TimestampType, true),
+      StructField("tag", StringType, true),
+      StructField("value", DoubleType, true)
+    )
+    val schema = StructType(fields)
+    sqlContext.createDataFrame(rowRdd, schema)
+  }
+
   def main(args: Array[String]): Unit = {
     val tag = args(0)
         
@@ -70,8 +105,9 @@ object DataForecast {
     val sc = new SparkContext(conf)
     val sqlContext = new SQLContext(sc)
 
-    val dataObs = loadObservations(sqlContext, "./data_201601/adata_301.csv", tag)
+    //val dataObs = loadObservations(sqlContext, "./data_201601/adata_301.csv", tag)
     //val dataObs = loadObservationsFromES(sqlContext, "xj-data/data", tag)
+val dataObs = loadObservationsFromPI(sqlContext, "", tag)
     //println(dataObs.count)
     //return
     
